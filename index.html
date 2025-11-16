@@ -453,6 +453,143 @@ document.querySelectorAll('.combo-click').forEach(img=>{
     }
   });
 });
+
+</script>
+<!-- ======= Modal admin + scripts de auth e trigger 6 toques ======= -->
+
+<!-- Admin modal -->
+<div id="adminModal" style="display:none;position:fixed;z-index:10000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;padding:18px;max-width:360px;margin:auto;">
+    <h3 style="margin-top:0">Painel de Administrador</h3>
+    <div id="adminStatus" class="muted">Faça login para ver agendamentos com nomes.</div>
+    <input id="adminEmail" type="email" placeholder="email" style="width:100%;padding:8px;margin-top:8px;border-radius:8px;border:1px solid #eee">
+    <input id="adminPass" type="password" placeholder="senha" style="width:100%;padding:8px;margin-top:8px;border-radius:8px;border:1px solid #eee">
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="adminSignIn" class="btn" style="flex:1">Entrar</button>
+      <button id="adminClose" class="btn" style="background:#ddd;color:#333">Fechar</button>
+    </div>
+    <div id="adminPanel" style="display:none;margin-top:12px">
+      <h4 style="margin:6px 0">Agendamentos (com nomes)</h4>
+      <div id="adminBookings" style="max-height:260px;overflow:auto;border-radius:8px;padding:8px;border:1px solid #f2e6ea"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+
+<script>
+/* =========== TRIGGER 6 TOQUES NO ÍCONE (.mark) =========== */
+(function(){
+  const mark = document.querySelector('.mark');
+  if(!mark) return;
+  let taps = 0;
+  let timer = null;
+  const MAX_GAP = 1200; // ms para resetar o contador
+  mark.addEventListener('click', onTap);
+  mark.addEventListener('touchstart', onTap);
+  function onTap(e){
+    taps++;
+    if(timer) clearTimeout(timer);
+    timer = setTimeout(()=>{ taps=0; }, MAX_GAP);
+    if(taps >= 6){
+      taps = 0;
+      openAdminModal();
+    }
+  }
+})();
+
+/* =========== INICIALIZAÇÃO DO FIREBASE AUTH (usa seu firebaseConfig existente) =========== */
+/* já tem firebase-app-compat e database-compat incluidos no seu arquivo; aqui adicionamos auth-compat */
+if(typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length>0){
+  // auth estará disponível via firebase.auth()
+} else {
+  console.warn('Firebase não inicializado — verifique firebaseConfig no topo do HTML.');
+}
+
+const adminModal = document.getElementById('adminModal');
+const adminClose = document.getElementById('adminClose');
+const adminSignIn = document.getElementById('adminSignIn');
+const adminEmail = document.getElementById('adminEmail');
+const adminPass = document.getElementById('adminPass');
+const adminStatus = document.getElementById('adminStatus');
+const adminPanel = document.getElementById('adminPanel');
+const adminBookings = document.getElementById('adminBookings');
+
+adminClose.addEventListener('click', ()=> adminModal.style.display='none');
+function openAdminModal(){ adminModal.style.display='flex'; }
+
+/* Login com Email/Password (recomendado) */
+adminSignIn.addEventListener('click', async ()=>{
+  const email = adminEmail.value.trim();
+  const pass = adminPass.value;
+  if(!email || !pass){ alert('Coloque email e senha'); return; }
+  try{
+    const userCred = await firebase.auth().signInWithEmailAndPassword(email, pass);
+    adminStatus.textContent = 'Autenticado como ' + (userCred.user.email || '');
+    adminEmail.value=''; adminPass.value='';
+    showAdminBookings(); // mostra painel
+  }catch(err){
+    console.error(err);
+    alert('Erro ao autenticar: ' + (err.message||err));
+  }
+});
+
+/* Se o admin já estiver logado, mostra o painel */
+firebase.auth().onAuthStateChanged(user=>{
+  if(user){
+    adminStatus.textContent = 'Autenticado como ' + (user.email || '');
+    showAdminBookings();
+  } else {
+    adminStatus.textContent = 'Faça login para ver agendamentos com nomes.';
+    adminPanel.style.display = 'none';
+    adminBookings.innerHTML = '';
+  }
+});
+
+/* Função para buscar agendamentos DO FIREBASE e mostrar nomes (apenas para admins autenticados) */
+async function showAdminBookings(){
+  const user = firebase.auth().currentUser;
+  if(!user){ alert('Faça login como administrador.'); return; }
+  // busca todos os bookings no realtime db
+  try{
+    const snap = await firebase.database().ref('bookings').once('value');
+    const data = snap.val() || {};
+    // data tem estrutura: { "YYYY-MM-DD": { key1: {name, service, start, end}, ... }, ... }
+    let html = '';
+    const dates = Object.keys(data).sort();
+    for(const dt of dates){
+      const dayObj = data[dt];
+      const entries = Object.values(dayObj || {});
+      if(entries.length===0) continue;
+      html += '<div style="margin-bottom:10px"><strong>' + dt + '</strong>';
+      for(const e of entries){
+        html += '<div style="padding:6px;border-bottom:1px solid #f5e0e8"><strong>' + (e.start||'') + ' - ' + (e.end||'') + '</strong> • ' + (e.service||'') + ' • <em>' + (e.name||'') + '</em></div>';
+      }
+      html += '</div>';
+    }
+    adminBookings.innerHTML = html || '<div class="muted">Nenhum agendamento encontrado.</div>';
+    adminPanel.style.display = 'block';
+  }catch(err){
+    console.error('Erro ao carregar bookings (admin):', err);
+    alert('Erro ao carregar agendamentos. Veja console.');
+  }
+}
+
+/* Log out (pressione duas vezes no botão Fechar enquanto logado para desconectar) */
+let closeCount = 0;
+adminClose.addEventListener('click', ()=>{
+  if(firebase.auth().currentUser){
+    closeCount++;
+    setTimeout(()=> closeCount = 0, 800);
+    if(closeCount >= 2){
+      firebase.auth().signOut();
+      alert('Desconectado.');
+      adminModal.style.display='none';
+    }
+  } else {
+    adminModal.style.display='none';
+  }
+});
 </script>
 </body>
 </html>
